@@ -76,11 +76,7 @@ Requirements:
 
 Just ask Claude, in plain language, in any project:
 
-> 帮我用 ChatGPT 生成一张赛博朋克风格的猫,存到 C:\Users\me\Desktop\test-gen
-
-or in English:
-
-> Generate a cyberpunk cat with ChatGPT and save it to ~/Desktop/test-gen
+> Generate a cyberpunk cat with ChatGPT and save it to C:\Users\me\Desktop\test-gen
 
 Claude picks up the skill automatically from its description — no slash command
 needed.

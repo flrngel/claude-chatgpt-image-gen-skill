@@ -1,74 +1,84 @@
 ---
 name: chatgpt-image-gen
 description: >
-  驱动用户已登录的真实 Chrome(经 claude-in-chrome)打开 chatgpt.com,用 ChatGPT 原生的
-  "Create an image" 生图能力生成图片,点击图片自带的下载按钮把文件存到调用者指定的本地目录,
-  并报告最终绝对路径。触发词:"用 chatgpt 生成/画一张图"、"chatgpt 生图"、"chatgpt.com 画图"、
-  "帮我用 ChatGPT 出一张图存到 xxx"。这是操作网页版 UI,不是调用 OpenAI API/SDK;若用户要走 API
-  或火山方舟/豆包生图(arkcli +gen),不要用本 skill。
+  Drive the user's already-logged-in real Chrome via claude-in-chrome, open
+  chatgpt.com, generate an image using ChatGPT's native "Create an image"
+  capability, click the image's built-in download button to save the file to a
+  local directory specified by the caller, and report the final absolute path.
+  Trigger phrases: "use chatgpt to generate/draw an image", "chatgpt image
+  generation", "draw on chatgpt.com", and "help me use ChatGPT to generate an
+  image and save it to xxx". This skill operates the web UI rather than calling
+  the OpenAI API/SDK directly; if the user wants API or provider-based image
+  generation (for example `arkcli +gen` for Volcano Ark or Doubao), do not use
+  this skill.
 ---
 
-# ChatGPT 网页版生图(claude-in-chrome 驱动 + 自动落盘)
+# ChatGPT web image generation (claude-in-chrome + automatic save)
 
 ## Overview
 
-用 claude-in-chrome 操作用户当前已登录的真实 Chrome,在 chatgpt.com 用原生 "Create an image"
-能力生成图片,再点击图片自带的下载按钮把文件存到本地,最终把绝对路径报告给用户。全程不需要新建
-浏览器 profile、不需要重新登录、不需要任何自定义 MCP server。
+Use claude-in-chrome to operate the user's currently logged-in real Chrome,
+open chatgpt.com, generate an image using ChatGPT's native "Create an image"
+feature, click the image's in-page download button to save it locally, and then
+report the final absolute file path to the user. The process does not require a
+new browser profile, a re-login, or any custom MCP server.
 
-这是一次全局能力,不绑定任何具体项目的品牌规范。
+This is a general-purpose skill and is not tied to any specific project branding.
 
 ## When to use / When NOT to use
 
-- 用:用户想要"用 ChatGPT 生成一张图并存到本地某个目录"。
-- 不用:用户要走 OpenAI API/SDK 编程调用 —— 那是纯代码集成,不需要操作浏览器。
-- 不用:用户要火山方舟/豆包生图 —— 用 `arkcli +gen`。
-- 不用:用户要 Sora 视频 —— 那是 sora.chatgpt.com,不是本 skill 覆盖的范围。
+- Use: the user wants to "generate an image with ChatGPT and save it to a local directory".
+- Do not use: the user wants to call the OpenAI API/SDK directly — that is pure code integration and does not require browser automation.
+- Do not use: the user wants to use Volcano Ark / Doubao image generation — use `arkcli +gen` instead.
+- Do not use: the user wants Sora video generation — that is on sora.chatgpt.com, outside the scope of this skill.
 
 ## Prerequisites
 
-- 用户 Chrome 已装 claude-in-chrome 扩展,且**已经在该浏览器里登录了 ChatGPT 账号**(不是随便哪个
-  设备/窗口登录,必须是被 claude-in-chrome 实际驱动的那个 Chrome)。Claude 绝不自动填账号密码——
-  发现未登录时终止,提示用户手动登录后重试。
-- 若 `list_connected_browsers` 发现连了不止一个 Chrome,必须先用 `AskUserQuestion` 把每个已连接
-  浏览器列出来让用户选(工具自身规则要求,不能自己代选)。
-- 用户 Chrome 的下载设置里"下载前询问每个文件的保存位置"应为**关闭**状态,否则原生下载会弹一个
-  claude-in-chrome 看不到的 OS 对话框,导致下载流程卡住。如果怀疑这个开关是开着的,提醒用户去
-  `chrome://settings/downloads` 关掉。
+- The user's Chrome must have the claude-in-chrome extension installed and must
+  already be logged into ChatGPT in that browser profile. It is not enough for
+  the user to be signed in on some other device or window; it must be the exact
+  Chrome instance being driven by claude-in-chrome. Claude must never auto-fill
+  account credentials — if the user is not logged in, stop and ask them to log
+  in manually before retrying.
+- If `list_connected_browsers` shows more than one Chrome instance, you must use
+  `AskUserQuestion` to list each connected browser and ask the user to select the
+  correct one before proceeding. This is a tool rule and cannot be bypassed.
+- The user's Chrome download setting "Ask where to save each file before
+  downloading" should be turned off; otherwise the native download triggers an
+  OS-level dialog that claude-in-chrome cannot see or click, which will stall the
+  flow. If this setting is suspected to be enabled, ask the user to disable it in
+  `chrome://settings/downloads`.
 
 ## Parameters
 
-| 参数 | 必填 | 说明 |
+| Parameter | Required | Description |
 |---|---|---|
-| `prompt` | 是 | 生图的自然语言描述,原样输入到 ChatGPT 的 "Create image" 组合框里 |
-| `save_dir` | 是 | 保存目录(绝对路径),不存在则自动创建 |
-| `filename` | 否 | 不给则用 ChatGPT 默认下载文件名(`ChatGPT Image <Mon> <D>, <YYYY>, <hh>_<mm>_<ss> <AM/PM>.png`) |
-| `new_conversation` | 否,默认 true | true 则新建标签页开新对话;false 则复用用户已打开的 chatgpt 标签页(需用户明确要求) |
-| `max_wait_seconds` | 否,默认 180 | 生成超时阈值(实测一次生成约 63 秒,180 秒留足余量) |
-| `keep_tab_open` | 否,默认 true | 完成后是否关闭本次新建的标签页 |
-| `reference_image_path` | 否 | 本地参考图路径,走 "Upload a photo" 做图生图——**具体上传交互未实测**,遇到时先按 `find` 探索,不要凭猜测硬编码步骤 |
-| `count` / `aspect_ratio` | 否 | ChatGPT 网页版当前**没有发现**专门的数量/宽高比 UI 控件,只能在 prompt 文字里附加要求,不保证生效 |
+| `prompt` | Yes | The natural-language image description, pasted directly into ChatGPT's "Create image" composer |
+| `save_dir` | Yes | The destination directory (absolute path); it will be created automatically if missing |
+| `filename` | No | If omitted, ChatGPT's default filename is used (`ChatGPT Image <Mon> <D>, <YYYY>, <hh>_<mm>_<ss> <AM/PM>.png`) |
+| `new_conversation` | No, default `true` | `true` opens a new tab in a new conversation; `false` reuses the user's already-open chatgpt tab (only if the user explicitly requests it) |
+| `max_wait_seconds` | No, default `180` | Generation timeout; a single image generation takes about 63 seconds in practice, so 180 seconds leaves adequate margin |
+| `keep_tab_open` | No, default `true` | Whether to close the newly created tab after completion |
+| `reference_image_path` | No | Local reference image path for image-to-image generation via "Upload a photo" — the exact upload interaction has not been verified yet; when encountered, inspect with `find` first instead of hard-coding steps |
+| `count` / `aspect_ratio` | No | The ChatGPT web UI does not currently expose dedicated controls for quantity or aspect ratio; these must be specified in the prompt text instead and may not be honored |
 
-参数细节和已知选择器全部以 `reference/dom-recon.md` 为准,那份文档记录了实测日期,选择器失效时先去
-更新那份文档,不要直接改这里的表格。
+All parameter details and known selectors must follow `reference/dom-recon.md`.
+That document records the real test date; if a selector fails twice in a row,
+update that file first instead of editing this table directly.
 
 ## Workflow
 
-1. **加载工具**:一次性 `ToolSearch` 批量加载 `tabs_context_mcp,navigate,computer,read_page,find,javascript_tool,tabs_create_mcp,tabs_close_mcp`(需要参考图再加 `file_upload`)。不要一个个单独加载。
-2. **确认浏览器**:`list_connected_browsers`。只有一个且 `isLocal:true` 时也建议用 `AskUserQuestion`
-   走一遍确认(工具自身的强制规则),避免误操作别人的浏览器。
-3. **建标签页**:`tabs_context_mcp({createIfEmpty:true})` → `tabs_create_mcp()`(除非用户要求复用
-   已开的标签页)。
-4. **打开首页判定登录态**:`navigate` 到 `https://chatgpt.com`,等待 2-3 秒,`computer(screenshot)`
-   看一眼。右上角出现 `Log in`/`Sign up for free` = 未登录,终止并提示用户手动登录;没有则视为已
-   登录,继续。
-5. **进入 Create image 模式**:`find("Create an image button")` 或直接点击首页 composer 下方的
-   `Create an image` 快捷按钮;点击后 composer 内出现不可删除的 `Create image` 标签。
-6. **输入描述并提交**:点击标签后的光标位置,`computer(type, text=prompt)`,再点发送箭头
-   (或 `find("send button")`)。
-7. **轮询生成状态**(每 3-5 秒一次,直到 `max_wait_seconds`):
+1. **Load tools**: use a single `ToolSearch` call to load
+   `tabs_context_mcp,navigate,computer,read_page,find,javascript_tool,tabs_create_mcp,tabs_close_mcp`.
+   If a reference image is needed, also add `file_upload`. Do not load tools one by one.
+2. **Confirm the browser**: run `list_connected_browsers`. Even when only one Chrome is connected and `isLocal:true`, it is still advisable to use `AskUserQuestion` to confirm it (this is a tool rule), so you do not operate someone else's browser by mistake.
+3. **Create a tab**: use `tabs_context_mcp({createIfEmpty:true})` and then `tabs_create_mcp()` unless the user explicitly wants to reuse an already-open chatgpt tab.
+4. **Open the home page and check login state**: `navigate` to `https://chatgpt.com`, wait 2–3 seconds, and take a quick `computer(screenshot)`. If the top-right shows `Log in` / `Sign up for free`, the user is not logged in; stop and ask them to log in manually. Otherwise, continue.
+5. **Enter Create image mode**: use `find("Create an image button")` or click the homepage composer shortcut `Create an image` button directly; after clicking, the composer should show an unremovable `Create image` pill.
+6. **Enter the prompt and submit**: place the cursor after the pill, `computer(type, text=prompt)`, and then click the send arrow (or `find("send button")`).
+7. **Poll for generation status** (every 3–5 seconds until `max_wait_seconds`):
    ```js
-   // javascript_tool text 参数
+   // javascript_tool text argument
    (() => {
      const main = document.querySelector('main');
      const stopBtn = document.querySelector('[data-testid="stop-button"]');
@@ -76,68 +86,51 @@ description: >
      return JSON.stringify({ generating: !!stopBtn, imgCount: imgs.length });
    })()
    ```
-   - `generating:true` → 继续等待。
-   - `generating:false, imgCount:0` → 没有产出图片:读最后一条 assistant turn
-     (`section[data-turn="assistant"]`)的纯文本内容作为原因,转述给用户,终止(可能是内容策略
-     拒绝,也可能是别的未知阻断——如实转述,不要编造"额度耗尽"之类没观察到的原因)。
-   - `generating:false, imgCount>0` → 生成成功,进入下载步骤。
-   - 超过 `max_wait_seconds` 仍 `generating:true` → 判定卡住,终止并告知用户已放弃(可选:换新
-     对话重试 1 次)。
-8. **下载**(核心步骤,只用下面这一条路径,不要尝试其他方式——原因见"Common mistakes"):
-   1. Bash/PowerShell 执行 `scripts/snapshot-downloads.ps1`,记下它打印出的 Downloads 路径。
-   2. `find("Share this image button")` 定位生成图片的分享/导出图标(hover 工具条右下角),
-      `computer(left_click, ref=...)` 点击。
-   3. 用 `javascript_tool` 执行 `document.querySelectorAll('[role="dialog"]').length` 确认弹层已
-      打开(**不要靠截图判断**,弹层经常拍不出来或让截图工具卡住,详见 Common mistakes)。
-   4. `find("Download button in image dialog")` 定位 Download 按钮,`computer(left_click, ref=...)`
-      点击。
-   5. Bash/PowerShell 执行 `scripts/capture-download.ps1 -SnapshotPath <上一步路径> -DestDir <save_dir> [-DestFileName <filename>]`,
-      拿到脚本打印出的最终绝对路径。
-9. **校验并报告**:确认返回路径的文件存在、大小非 0(脚本内部已做这个校验,拿到路径基本等于校验
-   通过),把绝对路径告诉用户。
-10. **收尾**:按 `keep_tab_open` 决定是否 `tabs_close_mcp` 关闭本次新建的标签页。
+   - `generating:true` → keep waiting.
+   - `generating:false, imgCount:0` → no image was produced: read the last assistant turn (`section[data-turn="assistant"]`) and report its plain text as the reason, then stop. This may be a content policy refusal or another unknown block; do not invent reasons like "quota exhausted" unless you have observed them.
+   - `generating:false, imgCount>0` → generation succeeded; proceed to the download step.
+   - If `generating:true` persists beyond `max_wait_seconds` → consider the generation stuck, stop, and tell the user it was abandoned (optionally retry in a fresh conversation once).
+8. **Download** (core step: use only this route; do not try alternatives — see "Common mistakes"):
+   1. Run `scripts/snapshot-downloads.ps1` via Bash/PowerShell and record the Downloads path it prints.
+   2. Use `find("Share this image button")` to locate the image's share/export icon in the hover toolbar at the lower-right corner, then `computer(left_click, ref=...)` to click it.
+   3. Use `javascript_tool` to run `document.querySelectorAll('[role="dialog"]').length` and confirm the dialog is open. Do not rely on screenshots here; the dialog often fails to render correctly or stalls the screenshot tool.
+   4. Use `find("Download button in image dialog")` to locate the `Download` button, then `computer(left_click, ref=...)` to click it.
+   5. Run `scripts/capture-download.ps1 -SnapshotPath <previous_path> -DestDir <save_dir> [-DestFileName <filename>]` in Bash/PowerShell and read the final absolute path printed by the script.
+9. **Verify and report**: confirm that the returned path exists and has non-zero size (the script already performs this validation internally, so a valid returned path is effectively a pass). Share the absolute path with the user.
+10. **Close up**: use `keep_tab_open` to decide whether to call `tabs_close_mcp` and close the newly created tab.
 
 ## Boundary cases
 
-| 情况 | 处理 |
+| Situation | Handling |
 |---|---|
-| 未登录 | 终止,提示手动登录,绝不自动填账号密码 |
-| 内容策略拒绝/未产出图片 | 读取 assistant turn 文本转述原因,不擅自换措辞重试规避审核 |
-| 边界请求被"软改写"(比如影射真实人物但没点名) | ChatGPT 通常不会硬拒绝,而是自己换成虚构版本继续生成——按正常"生成成功"流程处理,不用特殊拦截 |
-| 生成卡住(超过 max_wait_seconds) | 终止并告知已放弃,可选换新对话重试 1 次 |
-| 连了多个浏览器 | 遵循 `list_connected_browsers` 自带规则,`AskUserQuestion` 问用户选哪个 |
-| 撞验证码/人机挑战 | 立即停,告知用户,不自动重试硬闯 |
-| CDP 截图连续超时("renderer frozen") | 重试 1-2 次;仍不行就 `tabs_create_mcp` 开新标签页 `navigate` 回同一对话 URL(`https://chatgpt.com/c/<uuid>`),关掉旧标签页,不要死等 |
-| `find`/选择器连续两次定位失败 | 停下来提示用户"ChatGPT 页面结构可能已变化,需要重新做一次 DOM 侦察",不要无限重试或瞎猜新选择器 |
-| 下载前"询问保存位置"开关是开的 | 会弹出 claude-in-chrome 看不到的 OS 对话框卡住流程;提示用户去 `chrome://settings/downloads` 关闭该开关 |
-| 同一 `save_dir` 连续调用文件名撞车 | `capture-download.ps1` 已内置:目标文件名已存在时自动加数字后缀,不会覆盖 |
+| Not logged in | Stop, ask the user to log in manually, and never auto-fill account credentials |
+| Content policy refusal / no image produced | Read the assistant turn text and report the reason; do not rephrase or evade the refusal by guessing |
+| A boundary request is "softly rewritten" (for example, a reference to a real person without naming them) | ChatGPT often does not hard-reject these; it rewrites them into a fictional version and continues normally. Treat this as normal generation success and do not special-case it |
+| Generation stalls beyond `max_wait_seconds` | Stop and tell the user it was abandoned; optionally retry once in a new conversation |
+| Multiple browsers are connected | Follow the `list_connected_browsers` rule and ask the user to choose the correct browser via `AskUserQuestion` |
+| CAPTCHA / human-challenge prompt appears | Stop immediately and tell the user; do not attempt a forced retry |
+| Repeated CDP screenshot timeouts (`renderer frozen`) | Retry 1–2 times; if it still fails, open a new tab with `tabs_create_mcp`, `navigate` to the same conversation URL (`https://chatgpt.com/c/<uuid>`), and close the bad tab instead of waiting forever |
+| `find` / selector fails twice in a row | Stop and tell the user that the ChatGPT page structure may have changed and that DOM recon needs to be redone; do not keep retrying or guessing new selectors |
+| "Ask where to save each file before downloading" is enabled in the browser | This creates an OS dialog that claude-in-chrome cannot see, causing the flow to stall; tell the user to disable it at `chrome://settings/downloads` |
+| The same `save_dir` is reused and a filename collision occurs | `capture-download.ps1` already handles this by auto-appending a numeric suffix instead of overwriting the file |
 
 ## Common mistakes
 
-- **不要**尝试脱离浏览器直接用 `Invoke-WebRequest`/curl 下载图片 URL——那是 ChatGPT 自家需要
-  session cookie 的接口,没有 cookie 会 403。
-- **不要**尝试自动化"右键 → 复制图片"——原生上下文菜单是 OS 级渲染,claude-in-chrome 的
-  `find`/`read_page` 看不到菜单项,点不到。
-- **不要**试图把图片 URL(哪怕转成 base64)通过 `javascript_tool` 的返回值传出来——原文会被拦成
-  `[BLOCKED: Cookie/query string data]`,base64 之后依然被拦成 `[BLOCKED: Base64 encoded data]`。
-  这条路完全走不通,别浪费时间重试。
-- **不要**用固定像素坐标点击分享图标/下载按钮——坐标随对话长度、窗口大小变化,一律用 `find` +
-  `ref` 点击。
-- **不要**靠 `computer(screenshot)` 判断图片查看器弹层是否打开——弹层经常截不出来或让截图工具
-  超时卡住,改用 `javascript_tool` 查 `[role="dialog"]` 数量,或直接用 `find`。
-- **不要**用"点击下载后有没有新的网络请求"来判断下载是否成功——这次下载是纯前端 blob 操作,
-  `read_network_requests` 全程看不到任何痕迹。唯一可靠方法是点击前后对 Downloads 目录做文件名
-  快照 diff(`scripts/snapshot-downloads.ps1` + `scripts/capture-download.ps1` 已经封装好)。
-- **不要**用泛化的 `main img` 计数判断是否生成了新图——同一张图会因为渐进加载渲染出 2-3 个物理
-  `<img>` 标签,必须用 `img[alt^="Generated image"]` 这个更精确的选择器。
-- 登录态不确定时**不要猜**——直接截图人工确认或询问用户,不要自动尝试登录。
-- 遇到验证码/人机挑战**立即停**,不自动重试硬闯。
+- Do not try to bypass the browser and use `Invoke-WebRequest`/curl to download the image URL directly — that endpoint is owned by ChatGPT and requires the browser session cookie; without it, you get a 403.
+- Do not try to automate "right-click → Copy image" — the native context menu is OS-rendered and does not appear in claude-in-chrome's `find` / `read_page` view, so it cannot be clicked.
+- Do not try to pass the image URL (even if base64-encoded) back out of the browser via the `javascript_tool` return value — the literal result is blocked as `[BLOCKED: Cookie/query string data]`, and base64-encoded versions are blocked as `[BLOCKED: Base64 encoded data]`. This route is a dead end; do not waste time retrying it.
+- Do not use fixed pixel coordinates to click the share icon or download button — coordinates change with conversation length and window size. Always use `find` + `ref`.
+- Do not use `computer(screenshot)` to determine whether the image viewer dialog is open — it often renders incorrectly or causes the screenshot tool to time out. Instead, use `javascript_tool` to inspect the `[role="dialog"]` count or use `find` directly.
+- Do not use "Did a new network request appear after clicking download?" as the success signal — this image download is a pure front-end blob operation and `read_network_requests` shows no trace whatsoever. The only reliable method is a before/after filename snapshot diff on the Downloads folder (`scripts/snapshot-downloads.ps1` + `scripts/capture-download.ps1` already encapsulate this).
+- Do not use a generic `main img` count to decide whether a new image was generated — the same image may render as 2–3 physical `<img>` elements while it is still loading. Use the precise selector `img[alt^="Generated image"]` instead.
+- If the login state is uncertain, do not guess — use a screenshot to confirm manually or ask the user. Never attempt a login automatically.
+- If a CAPTCHA or human verification challenge appears, stop immediately and do not try to brute-force a retry.
 
-## 故障速查
+## Quick troubleshooting
 
-| 报错/现象 | 原因 | 处理 |
+| Error / symptom | Cause | Response |
 |---|---|---|
-| `CDP sendCommand "Page.captureScreenshot" timed out" / "renderer may be frozen"` | 常见于刚点开图片查看器弹层之后立刻截图 | 重试 1-2 次通常恢复;连续 3 次以上就换新标签页 `navigate` 回同一对话 URL |
-| `javascript_tool` 返回 `[BLOCKED: Cookie/query string data]` 或 `[BLOCKED: Base64 encoded data]` | 试图把敏感/高熵字符串(URL、base64)通过返回值传出浏览器 | 别传这类数据出来,本 skill 的下载流程完全不需要这么做 |
-| `capture-download.ps1` 报错 "No new stable download detected" | 下载按钮没点中(ref 过期/弹层没真的打开),或用户 Chrome 开着"下载前询问保存位置" | 用 `javascript_tool` 确认 `[role="dialog"]` 确实存在再重新 `find` 按钮点击一次;检查 Chrome 下载设置 |
-| 生图请求发出去后一直卡在 "Thinking"，超过 3 分钟没反应 | 极少数情况下 ChatGPT 后端卡住 | 换新对话重试一次,仍不行就终止告知用户 |
+| `CDP sendCommand "Page.captureScreenshot" timed out" / "renderer may be frozen"` | Common immediately after opening the image viewer dialog and taking a screenshot too quickly | Retry 1–2 times; if it still fails, open a new tab with `navigate` to the same conversation URL and close the old one |
+| `javascript_tool` returns `[BLOCKED: Cookie/query string data]` or `[BLOCKED: Base64 encoded data]` | The code tried to send sensitive or high-entropy strings (URL or base64 data) back out of the browser | Stop returning that data; this skill does not need to do so |
+| `capture-download.ps1` reports "No new stable download detected" | The download button was not clicked correctly (stale ref or the dialog did not actually open), or the browser has "Ask where to save each file before downloading" enabled | Confirm with `javascript_tool` that `[role="dialog"]` exists and click the button again; also check the Chrome download settings |
+| The image request hangs in "Thinking" for more than 3 minutes with no result | In rare cases the ChatGPT backend becomes stuck | Retry once in a new conversation; if it still fails, stop and tell the user |

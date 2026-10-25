@@ -1,141 +1,92 @@
-# chatgpt.com 生图 DOM 侦察记录
+# chatgpt.com image-generation DOM investigation notes
 
-实测日期:2026-07-06。账号:ChatGPT Pro 订阅。若 `find`/选择器连续两次定位失败,
-说明页面已改版,需要重新做一次本文档的实测,不要凭旧记录硬猜新选择器。
+Test date: 2026-07-06. Account: ChatGPT Pro subscription. If `find`/selector-based location fails twice in a row, that indicates the page has changed and the DOM needs to be re-tested; do not guess new selectors based on stale notes.
 
-## 登录态判定
+## Login-state detection
 
-- 未登录:页面右上角固定出现两个按钮,文案为 `Log in` 和 `Sign up for free`。
-- 已登录:右上角登录按钮消失;侧边栏出现 `Library` / `Projects` / `Scheduled` / `Apps`;左下角
-  出现头像 + 账号名 + 订阅等级(如 `<你的账号名>` / `Pro`)。
-- claude-in-chrome 操作的是**当前打开的真实 Chrome**,和用户是否在别的窗口/设备登录无关——必须在
-  被驱动的这个浏览器窗口里本人完成登录,Claude 绝不自动填账号密码。
+- Logged out: the top-right corner shows two fixed buttons with the text `Log in` and `Sign up for free`.
+- Logged in: the top-right login buttons disappear; the sidebar shows `Library` / `Projects` / `Scheduled` / `Apps`; the lower-left shows an avatar, account name, and subscription level (for example `<your account name>` / `Pro`).
+- claude-in-chrome operates the user's currently open real Chrome; it is irrelevant whether the user is logged in elsewhere or on another device. The login must be completed in the exact Chrome window being driven by claude-in-chrome, and Claude must never auto-fill account credentials.
 
-## 触发生图
+## Triggering image generation
 
-1. 新对话首页,composer 下方有三个快捷按钮:`Create an image` / `Write or edit` /
-   `Look something up`。点 `Create an image`。
-2. 点击后 composer 内出现一个**不可删除的 `Create image` 标签(pill)**,光标停在标签后,继续输入
-   的文字就是图片描述。同时下方 `Explore ideas` 区域会展示参考图/风格模板卡片(如
-   `Upload a photo`、`Messi mode`、`Bobblehead` 等),`Upload a photo` 可用于图生图——**本次未深入
-   测试图生图的具体上传交互,后续需要该功能时应单独实测**。
-3. 输入描述后点发送箭头按钮(或 `find` 定位 send 按钮)提交。
+1. On the new-conversation home page, the composer has three shortcut buttons beneath it: `Create an image` / `Write or edit` / `Look something up`. Click `Create an image`.
+2. After that, the composer displays an unremovable `Create image` pill; the cursor sits after the pill, and any text typed continues the image prompt. At the same time, the `Explore ideas` area below shows reference images or style cards such as `Upload a photo`, `Messi mode`, and `Bobblehead`; `Upload a photo` can be used for image-to-image generation. This was not explored in depth in this pass, and that specific upload interaction should be tested separately if needed.
+3. After entering the prompt, click the send arrow (or locate the send button with `find`) to submit.
 
-## 生成状态判定(核心决策表)
+## Generation-status detection (core decision table)
 
-| 现象 | 检测方式 | 结论 |
+| Observation | Check | Conclusion |
 |---|---|---|
-| composer 右侧出现"停止"图标而非发送箭头 | `document.querySelector('[data-testid="stop-button"]')` 非空 | 生成中 |
-| 停止按钮消失 | 同一 selector 变为 null | 生成阶段结束(还需判断是否真的产出了图片) |
-| `main` 容器内出现 `img[alt^="Generated image"]` | `document.querySelectorAll('img[alt^="Generated image"]')` 有元素 | 生成成功 |
-| 停止按钮消失但从未出现 `img[alt^="Generated image"]` | 同上为 0 | 判定为"未生成图片"(内容策略拒绝/仅文字回复),读取该 assistant turn 的纯文本作为原因 |
+| A "stop" icon appears on the right side of the composer instead of the send arrow | `document.querySelector('[data-testid="stop-button"]')` is non-null | Generation is in progress |
+| The stop button disappears | The same selector becomes `null` | The generation phase has ended; you still need to confirm whether an image was actually produced |
+| `main` contains `img[alt^="Generated image"]` | `document.querySelectorAll('img[alt^="Generated image"]')` returns one or more elements | Generation succeeded |
+| The stop button disappears but `img[alt^="Generated image"]` never appears | The same query returns 0 | No image was generated (content policy refusal / text-only reply); read the plain assistant-turn text as the reason |
 
-**关键坑**:
-- 不要用泛化的 `main.querySelectorAll('img')` 计数——同一张生成图会因为渐进式加载动画渲染出
-  2~3 个物理 `<img>` 标签(不同 `class`,如 `absolute top-0 z-1 w-full` 与 `absolute top-0 w-full`,
-  应该是模糊占位层+清晰层叠加)。**必须用 `img[alt^="Generated image"]` 这个更精确的选择器**,alt
-  属性固定以 `"Generated image: "` 开头,后面跟一句 AI 自己生成的图片描述,这个选择器实测每张图只
-  会命中 1 个逻辑结果对应的最后一层。
-- assistant 消息容器的选择器是 `section[data-turn="assistant"]`(或
-  `[data-testid="conversation-turn-N"]`),**不是** `[data-message-author-role="assistant"]`——
-  后者在当前版本页面上查不到任何元素。
-- 实测一次生成耗时约 **63 秒**("Thought for 1m 3s")。轮询间隔建议 3-5 秒,超时阈值默认建议
-  150-180 秒(留够余量,不要按 63 秒去卡死限)。
-- 一次 `Create image` 请求实测**只生成 1 张图**,没有观察到"一次多图"的专门 UI 控件;要多张目前
-  只能在 prompt 里附加要求(不保证生效)或多次调用。
+Key caveats:
+- Do not use a broad `main.querySelectorAll('img')` count. The same generated image may render 2–3 physical `<img>` elements during progressive loading, with different classes such as `absolute top-0 z-1 w-full` and `absolute top-0 w-full`; these are likely a blurred placeholder layer plus a sharper overlay layer. Use the more precise selector `img[alt^="Generated image"]` instead. The `alt` property is consistently prefixed with `"Generated image: "`, followed by a generated caption, and in practice this selector resolves to the final logical image layer only once.
+- The assistant message container selector is `section[data-turn="assistant"]` (or `[data-testid="conversation-turn-N"]`); it is not `[data-message-author-role="assistant"]`. The latter does not exist on the current page.
+- A generation run took about 63 seconds in practice (`"Thought for 1m 3s"`). Polling every 3–5 seconds is recommended; the default timeout should be about 150–180 seconds to leave headroom instead of hard-coding to the 63-second baseline.
+- One `Create image` request appears to generate exactly one image; no dedicated multi-image UI was observed. For multiple images, the only current options are to request them in the prompt (not guaranteed to work) or to call the flow multiple times.
 
-## 图片托管与下载(最关键的实测结论)
+## Image hosting and download (the most important findings)
 
-生成图片的 `<img src>` 是 **ChatGPT 自家同源接口**,不是外部 CDN:
+The generated image's `<img src>` comes from a **ChatGPT same-origin backend endpoint**, not from an external CDN:
 
 ```
-https://chatgpt.com/backend-api/estuary/content?id=<file-id>&ts=<timestamp>&p=fs&cid=<n>&sig=<签名>&v=0
+https://chatgpt.com/backend-api/estuary/content?id=<file-id>&ts=<timestamp>&p=fs&cid=<n>&sig=<signature>&v=0
 ```
 
-### 路径 A(直连 URL 下载)—— 实测不成立
+### Path A: direct URL download — not viable in practice
 
 ```js
 await fetch(url, { credentials: 'omit' })     // -> 403, application/json
 await fetch(url, { credentials: 'include' })  // -> 200, image/png
 ```
 
-该接口**依赖浏览器 session cookie**,不是纯签名参数就能访问的公开 URL。脱离浏览器用
-`Invoke-WebRequest`/`curl` 直接下载**不可行**,不要在这个方向上再尝试。
+This interface depends on the browser session cookie; it is not a public URL that can be accessed using only signed parameters. Downloading it directly from outside the browser via `Invoke-WebRequest`/`curl` is not viable; do not keep pursuing this route.
 
-### 路径 B(右键"复制图片")—— 实测不成立
+### Path B: right-click "Copy image" — not viable
 
-原生右键菜单是 **OS 级渲染**,不出现在页面无障碍树里。`find("Copy image context menu item")`
-明确返回"不在无障碍树中",`right_click` 之后也截不到原生菜单画面。**这条路径无法通过
-claude-in-chrome 自动化,不要采用。**
+The native right-click menu is rendered at the OS level and does not appear in the page accessibility tree. `find("Copy image context menu item")` clearly returns "not in the accessibility tree", and `right_click` does not capture the native menu screen. This path cannot be automated through claude-in-chrome and should not be used.
 
-### 路径 C(点击图片自带的下载按钮)—— 实测成立,是唯一可用路径
+### Path C: click the image's own Download button — confirmed and the only working path
 
-1. 每张生成图 hover 工具条右下角有一个"分享/导出"图标(`find` 时语义描述为
-   `"Share this image button"`,不要用固定坐标,坐标随对话长度/窗口大小变化)。
-2. 点击后会打开一个 `[role="dialog"]` 的图片查看器弹层,里面有一个纯文本为 `Download` 的按钮
-   (`find("Download button in image dialog")` 可稳定定位)。
-3. 点击 `Download` 按钮后,Chrome **直接把文件存到系统默认 Downloads 目录**,文件名格式固定为:
+1. Every generated image shows a share/export icon in the lower-right corner of the hover toolbar. When locating it with `find`, use the semantic description `"Share this image button"`; do not use fixed coordinates because they change with conversation length and window size.
+2. Clicking it opens an image viewer dialog with `[role="dialog"]`, and inside that dialog there is a plain-text `Download` button. `find("Download button in image dialog")` is stable enough to locate.
+3. After clicking `Download`, Chrome saves the file directly to the system default Downloads directory. The file name format is fixed as:
    ```
    ChatGPT Image <Mon> <D>, <YYYY>, <hh>_<mm>_<ss> <AM/PM>.png
    ```
-   例如 `ChatGPT Image Jul 6, 2026, 06_42_53 PM.png`。实测文件为**完整原始分辨率**(1254×1254,
-   约 2MB),不是有损压缩后的截图。
-4. `chrome://settings/downloads` 的"下载前询问保存位置"在测试用的 Chrome 上是关闭状态,所以下载
-   全程无弹窗、无需人工确认。**如果用户的 Chrome 开着这个开关,路径 C 会失效**,需要在 SKILL.md
-   里提醒用户关闭该开关,或改问用户手动保存。
+   For example, `ChatGPT Image Jul 6, 2026, 06_42_53 PM.png`. The file is the full-resolution original image (1254×1254, about 2 MB), not a lossy screenshot.
+4. On the Chrome used for testing, `chrome://settings/downloads` had "Ask where to save each file before downloading" turned off, so the download proceeded without prompts or manual confirmation. If the user's Chrome has that setting enabled, Path C will fail; the skill must tell the user to disable it in SKILL.md or ask them to save it manually.
 
-**判定下载是否成功、拿到真实路径的唯一可靠方法:点击下载前后对 Downloads 目录做文件名快照 diff**
-(不是看时间戳,是做真实的 before/after 文件名集合差集)。原因:这次下载**不产生任何新的网络请求**
-(`read_network_requests` 全程看不到痕迹),是纯前端 blob 操作,没法从网络层面判断下载是否发生。
-具体脚本见 `scripts/snapshot-downloads.ps1` + `scripts/capture-download.ps1`。
+The only reliable way to confirm a successful download and obtain the real path is to compare the Downloads directory's filename snapshot before and after the click (not the timestamp, but the true before/after set difference). The reason is that this download does not produce any network request at all (`read_network_requests` shows nothing), because it is a pure front-end blob save and cannot be detected from the network layer. See `scripts/snapshot-downloads.ps1` and `scripts/capture-download.ps1`.
 
-### 死路径:通过 `javascript_tool` 把图片 URL/字节传出浏览器
+### Dead end: trying to move the image URL or bytes out of the browser via `javascript_tool`
 
-- 直接 `return img.src` → 被拦截返回 `[BLOCKED: Cookie/query string data]`。
-- `return btoa(img.src)`(base64 之后再传)→ 依然被拦截,返回 `[BLOCKED: Base64 encoded data]`。
-  **过滤器不是只认 `&`/`=` 这种 query-string 特征,对通用 base64 字符集也有独立识别**,所以"转成
-  base64 绕过"这个思路对这个安全过滤器完全无效,不要在这个方向上浪费时间。
-- 这意味着**任何试图把完整 URL 或图片字节通过 `javascript_tool` 返回值搬出浏览器的方案都不可行**
-  (不只是因为 1-2KB 截断,是从根上就会被内容过滤器拦截)。
-- **例外**:`tabs_context_mcp` 汇报的"当前标签页 URL"不受这个过滤器影响(那是标签页元数据,不是
-  页面脚本回传值)。如果确实需要拿到完整签名 URL(比如想在浏览器内直接导航过去验证），可以在
-  `javascript_tool` 里执行 `location.href = img.src`(只返回一个安全占位字符串,不返回 URL 本身),
-  再用 `tabs_context_mcp` 读跳转后的真实 URL——但这只是调试手段,**正式流程不需要这一步**,因为
-  路径 C 已经完全够用。
+- `return img.src` → blocked with `[BLOCKED: Cookie/query string data]`.
+- `return btoa(img.src)` (base64 then return) → still blocked, with `[BLOCKED: Base64 encoded data]`.
+  The filter is not limited to `&` / `=` query-string patterns; it also recognizes generic base64 character sets. So trying to "bypass" the filter by base64-encoding the URL does not work.
+- This means any attempt to return the complete URL or image bytes through the `javascript_tool` return value is not viable. It is not only a 1–2 KB truncation issue; the content filter blocks it at the root.
+- Exception: the `tabs_context_mcp` "current tab URL" metadata is not subject to this filter. If it becomes necessary to capture the full signed URL for debugging purposes (for example, to navigate to it in-browser for validation), `javascript_tool` can run `location.href = img.src` and return a harmless placeholder string without returning the URL itself; then `tabs_context_mcp` can be used to read the resulting page URL. This is only a debugging technique, not part of the normal workflow, because Path C is already sufficient.
 
-## 内容策略 / 边界情况实测
+## Content policy / edge-case observations
 
-- 用一个模糊但敏感的请求测试:`"a photorealistic image of a specific real living celebrity's exact face"`。
-  ChatGPT **没有硬拒绝**,而是先展示一段可展开的"思考摘要"(灰色小字 `Creating a portrait of a
-  fictional celebrity ›`),正文说明"请求缺乏足够细节以确定具体人物,不应该擅自评判/挑选,因此会
-  生成一个虚构的、非常有魅力的名人形象",然后**继续正常生成并成功产出图片**。
-  - 结论:对于"影射真实人物但没点名"这类边界请求,ChatGPT 倾向于**软改写**而不是硬拒绝,生成流程
-    不会中断。
-  - 检测方式:assistant turn 里在生成图片之前会多出一段带小箭头的折叠摘要 + 说明文字块,可以用
-    `find`/`read_page` 观察到,但**不影响"生成中/完成"判定逻辑**(最终仍会出现
-    `img[alt^="Generated image"]`)。
-- **本次没有实测触发到真正的硬拒绝**(纯文字回复、不产生任何图片)。按通用经验,判定逻辑已经在
-  上面"生成状态判定"表格里覆盖:停止按钮消失 + 从未出现 `img[alt^="Generated image"]` = 判定为
-  拒绝/失败,读取该 turn 的文本内容作为原因转述给用户。
-- **额度耗尽提示**:测试账号是 Pro 订阅,未观察到"达到限制/请升级"类提示,如实标注为未验证项,
-  实现时不要编造具体文案,遇到时按"出现未知阻断性提示"降级为"终止并如实转述页面文字"处理。
+- We tested a vague but sensitive request: `"a photorealistic image of a specific real living celebrity's exact face"`.
+  ChatGPT did not hard-reject it. Instead, it first displayed a collapsible "thinking summary" in gray text such as `Creating a portrait of a fictional celebrity ›`, and the body explained that the request lacked enough detail to identify a real person and that it should not judge or select a person arbitrarily; it then generated a fictional, highly appealing celebrity image and continued successfully.
+  - Conclusion: for requests that allude to a real person without naming them, ChatGPT tends to do a soft rewrite rather than a hard rejection, and the generation flow continues normally.
+  - Detection method: the assistant turn includes an extra collapsed summary block with a small arrow before the image generation, which can be observed via `find` / `read_page`, but this does not affect the generation-in-progress / generation-complete logic; the final result still shows `img[alt^="Generated image"]`.
+- We did not trigger a true hard refusal in this pass (a pure text response with no image output). In general, the generation-state logic above already covers this: the stop button disappears and `img[alt^="Generated image"]` never appears = treat as refusal/failure, then read the text from that turn and report it to the user.
+- Quota exhaustion prompts: this was tested with a Pro subscription and no "limit reached / upgrade" message was observed. The implementation should leave this as an unverified item and, if such a message appears, degrade to "an unknown blocking prompt appeared" and report the exact page text instead of inventing a specific message.
 
-## 待验证 / 已知缺口
+## Pending validation / known gaps
 
-- 参考图上传(图生图/编辑)的具体交互细节(`Upload a photo` 之后的文件选择、上传后如何附加到
-  prompt)——本次未测试,`reference_image_path` 参数标注为"待后续实测"。
-- 免费账号(非 Pro)的额度耗尽提示文案——未观察到,不要编造。
-- 一次生成多图的官方 UI 控件——未发现,暂按"一次一图"设计。
+- Details of the reference-image upload workflow (image-to-image / editing with `Upload a photo`, file selection flow, and how it is attached to the prompt) were not tested in this pass; the `reference_image_path` parameter is therefore marked as "to be validated later".
+- The quota-exhaustion message for free or non-Pro accounts was not observed and should not be invented.
+- An official multi-image generation UI was not found, so the current design assumes one image per generation request.
 
-## 工程性坑(和生图本身无关,但会打断流程)
+## Engineering pitfalls (not related to generation itself, but they can interrupt the flow)
 
-- `computer` 的 `screenshot`/`zoom` 在这次侦察过程中**多次出现 `CDP sendCommand
-  "Page.captureScreenshot" timed out after 30000ms" / "renderer may be frozen"`**,尤其是在刚点开
-  图片查看器弹层(`role="dialog"`)之后立刻截图时。规律:**重试 1-2 次通常能恢复**;如果连续 3 次
-  以上超时,不要死等同一个 tab——直接 `tabs_create_mcp` 开新标签页、`navigate` 回同一个对话 URL
-  (`https://chatgpt.com/c/<uuid>`,对话历史是持久化的,可以直接复用这个 URL),再 `tabs_close_mcp`
-  关掉坏的旧标签页。
-- 图片查看器弹层(`role="dialog"`)打开后,**`computer` 截图经常拍不出弹层的正确内容**(有时返回
-  一个奇怪的裁切尺寸如 477×62,或直接超时)。**不要依赖截图判断弹层是否打开/定位按钮**——改用
-  `document.querySelectorAll('[role="dialog"]').length`(`javascript_tool`)或直接 `find` 按钮,这
-  两种方式在弹层不可见/截图异常时依然能正确工作。
+- During this investigation, `computer` screenshots and zoom operations frequently timed out with `CDP sendCommand "Page.captureScreenshot" timed out after 30000ms" / "renderer may be frozen"`, especially immediately after opening the image viewer dialog (`role="dialog"`). The pattern is that retries 1–2 times usually recover; if the timeout continues 3 or more times, do not keep waiting on the same tab. Instead use `tabs_create_mcp` to open a new tab, `navigate` to the same conversation URL (`https://chatgpt.com/c/<uuid>`, where chat history is persisted and can be reused), and then `tabs_close_mcp` to close the broken tab.
+- After the image viewer dialog (`role="dialog"`) opens, `computer` screenshots often fail to capture its actual content correctly (sometimes returning an odd crop such as 477×62 or timing out entirely). Do not rely on screenshots to determine whether the dialog is open or locate the button; instead use `document.querySelectorAll('[role="dialog"]').length` via `javascript_tool` or simply use `find` to locate the button. Both methods continue to work even when the dialog is not visible or the screenshot is unreliable.
