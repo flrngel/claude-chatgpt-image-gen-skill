@@ -54,7 +54,7 @@ the hard way.
 Clone (or copy) this repo directly into your Claude Code skills directory:
 
 ```bash
-git clone https://github.com/Ruby-Leung/claude-chatgpt-image-gen-skill.git \
+git clone https://github.com/flrngel/claude-chatgpt-image-gen-skill.git \
   ~/.claude/skills/chatgpt-image-gen
 ```
 
